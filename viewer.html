@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NKE Document Reviewer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.mjs" type="module"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --toolbar-h: 52px;
+    --sidebar-w: 260px;
+    --bg: #1e1e1e;
+    --surface: #2a2a2a;
+    --surface2: #333333;
+    --border: rgba(255,255,255,0.08);
+    --border2: rgba(255,255,255,0.15);
+    --text: #f0f0f0;
+    --text-muted: #999;
+    --accent: #4a8fcc;
+    --accent-hover: #5ba0de;
+    --danger: #cc4a4a;
+    --success: #4acc8a;
+    --radius: 6px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Toolbar ── */
+  #toolbar {
+    height: var(--toolbar-h);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+
+  #toolbar .brand {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    margin-right: 8px;
+    white-space: nowrap;
+  }
+
+  #toolbar .divider {
+    width: 1px;
+    height: 24px;
+    background: var(--border2);
+    margin: 0 4px;
+  }
+
+  #toolbar .doc-title {
+    font-size: 13px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 320px;
+  }
+
+  #toolbar .spacer { flex: 1; }
+
+  .tb-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .tb-btn:hover { background: var(--surface2); border-color: rgba(255,255,255,0.25); }
+  .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tb-btn.primary:hover { background: var(--accent-hover); }
+  .tb-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  .tb-icon-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+    transition: background 0.15s, color 0.15s;
+  }
+  .tb-icon-btn:hover { background: var(--surface2); color: var(--text); border-color: var(--border2); }
+
+  #page-input {
+    width: 44px;
+    height: 28px;
+    text-align: center;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--font);
+  }
+  #page-input:focus { outline: none; border-color: var(--accent); }
+
+  .page-label { font-size: 12px; color: var(--text-muted); }
+
+  /* ── Main layout ── */
+  #main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: var(--sidebar-w);
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: width 0.2s;
+  }
+  #sidebar.collapsed { width: 0; }
+
+  #sidebar-header {
+    padding: 12px 14px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  #thumbnail-list {
+    overflow-y: auto;
+    flex: 1;
+    padding: 10px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  #thumbnail-list::-webkit-scrollbar { width: 4px; }
+  #thumbnail-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  .thumb-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: var(--radius);
+    border: 1.5px solid transparent;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .thumb-item:hover { background: var(--surface2); }
+  .thumb-item.active { border-color: var(--accent); background: rgba(74,143,204,0.08); }
+
+  .thumb-canvas { border-radius: 3px; max-width: 200px; }
+  .thumb-num { font-size: 11px; color: var(--text-muted); }
+
+  /* ── Viewer area ── */
+  #viewer-wrap {
+    flex: 1;
+    overflow: auto;
+    background: #141414;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 24px 40px;
+    gap: 16px;
+  }
+  #viewer-wrap::-webkit-scrollbar { width: 8px; height: 8px; }
+  #viewer-wrap::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 4px; }
+  #viewer-wrap::-webkit-scrollbar-track { background: transparent; }
+
+  .page-container {
+    position: relative;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    border-radius: 2px;
+    line-height: 0;
+  }
+  .page-container canvas { display: block; border-radius: 2px; }
+
+  .page-num-badge {
+    position: absolute;
+    bottom: -22px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  /* ── Status bar ── */
+  #statusbar {
+    height: 26px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 16px;
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  #statusbar .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+  #statusbar .status-dot.ok { background: var(--success); }
+  #statusbar .status-dot.err { background: var(--danger); }
+  #statusbar .status-dot.loading {
+    background: var(--accent);
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ── Overlay states ── */
+  #overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    z-index: 100;
+  }
+  #overlay.hidden { display: none; }
+
+  .overlay-card {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    padding: 32px 40px;
+    max-width: 440px;
+    width: 90%;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .overlay-icon { font-size: 36px; }
+  .overlay-title { font-size: 17px; font-weight: 600; }
+  .overlay-msg { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+
+  .spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid var(--border2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .progress-bar-wrap {
+    width: 100%;
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.2s;
+  }
+
+  /* ── Zoom select ── */
+  #zoom-select {
+    height: 28px;
+    padding: 0 8px;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 12px;
+    font-family: var(--font);
+    cursor: pointer;
+  }
+  #zoom-select:focus { outline: none; border-color: var(--accent); }
+
+  /* ── Error card ── */
+  .error-card {
+    background: var(--surface);
+    border: 1px solid rgba(204,74,74,0.4);
+    border-radius: 10px;
+    padding: 28px 32px;
+    max-width: 480px;
+    width: 90%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .error-card .err-title { font-size: 15px; font-weight: 600; color: #f07070; }
+  .error-card .err-detail { font-size: 12px; color: var(--text-muted); font-family: monospace; word-break: break-all; }
+  .error-card .err-hint { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<!-- Toolbar -->
+<div id="toolbar">
+  <span class="brand">NKE Reviewer</span>
+  <div class="divider"></div>
+  <span class="doc-title" id="doc-title">Loading…</span>
+  <div class="spacer"></div>
+
+  <!-- Zoom -->
+  <select id="zoom-select" title="Zoom level">
+    <option value="0.5">50%</option>
+    <option value="0.75">75%</option>
+    <option value="1" selected>100%</option>
+    <option value="1.25">125%</option>
+    <option value="1.5">150%</option>
+    <option value="2">200%</option>
+    <option value="fit">Fit width</option>
+  </select>
+
+  <div class="divider"></div>
+
+  <!-- Page nav -->
+  <button class="tb-icon-btn" id="btn-prev" title="Previous page">&#8592;</button>
+  <input type="number" id="page-input" min="1" value="1" title="Page number" />
+  <span class="page-label" id="page-count">/ —</span>
+  <button class="tb-icon-btn" id="btn-next" title="Next page">&#8594;</button>
+
+  <div class="divider"></div>
+
+  <!-- Sidebar toggle -->
+  <button class="tb-icon-btn" id="btn-sidebar" title="Toggle thumbnails">&#9776;</button>
+</div>
+
+<!-- Main -->
+<div id="main">
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">Pages</div>
+    <div id="thumbnail-list"></div>
+  </div>
+
+  <!-- PDF canvas area -->
+  <div id="viewer-wrap" id="viewer"></div>
+</div>
+
+<!-- Status bar -->
+<div id="statusbar">
+  <div class="status-dot" id="status-dot"></div>
+  <span id="status-text">Initializing…</span>
+  <div style="flex:1"></div>
+  <span id="status-user"></span>
+  <span id="status-folder"></span>
+</div>
+
+<!-- Overlay -->
+<div id="overlay">
+  <div class="overlay-card" id="overlay-card">
+    <div class="spinner"></div>
+    <div class="overlay-title" id="overlay-title">Loading document</div>
+    <div class="overlay-msg" id="overlay-msg">Connecting to SharePoint…</div>
+    <div class="progress-bar-wrap" id="progress-wrap" style="display:none">
+      <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+// ── PDF.js setup ──────────────────────────────────────────────────────────────
+import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.mjs';
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const overlay        = document.getElementById('overlay');
+const overlayCard    = document.getElementById('overlay-card');
+const overlayTitle   = document.getElementById('overlay-title');
+const overlayMsg     = document.getElementById('overlay-msg');
+const progressWrap   = document.getElementById('progress-wrap');
+const progressBar    = document.getElementById('progress-bar');
+const viewerWrap     = document.getElementById('viewer-wrap');
+const thumbList      = document.getElementById('thumbnail-list');
+const sidebar        = document.getElementById('sidebar');
+const docTitleEl     = document.getElementById('doc-title');
+const pageInput      = document.getElementById('page-input');
+const pageCount      = document.getElementById('page-count');
+const btnPrev        = document.getElementById('btn-prev');
+const btnNext        = document.getElementById('btn-next');
+const btnSidebar     = document.getElementById('btn-sidebar');
+const zoomSelect     = document.getElementById('zoom-select');
+const statusDot      = document.getElementById('status-dot');
+const statusText     = document.getElementById('status-text');
+const statusUser     = document.getElementById('status-user');
+const statusFolder   = document.getElementById('status-folder');
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let pdfDoc       = null;
+let currentPage  = 1;
+let scale        = 1;
+let sidebarOpen  = true;
+let renderQueue  = Promise.resolve();
+const pageCanvases = {};  // pageNum -> canvas element
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setStatus(msg, state = 'idle') {
+  statusText.textContent = msg;
+  statusDot.className = 'status-dot' + (state === 'ok' ? ' ok' : state === 'err' ? ' err' : state === 'loading' ? ' loading' : '');
+}
+
+function setOverlay(title, msg, showProgress = false) {
+  overlayTitle.textContent = title;
+  overlayMsg.textContent   = msg;
+  progressWrap.style.display = showProgress ? 'block' : 'none';
+  overlay.classList.remove('hidden');
+}
+
+function hideOverlay() { overlay.classList.add('hidden'); }
+
+function showError(title, detail, hint) {
+  overlayCard.innerHTML = `
+    <div class="error-card">
+      <div class="err-title">&#9888; ${title}</div>
+      ${hint  ? `<div class="err-hint">${hint}</div>` : ''}
+      ${detail ? `<div class="err-detail">${detail}</div>` : ''}
+    </div>`;
+  overlay.classList.remove('hidden');
+}
+
+function getParam(name) {
+  return new URLSearchParams(location.search).get(name);
+}
+
+// ── Parse folder param ────────────────────────────────────────────────────────
+// Expected: ?folder=https://<tenant>.sharepoint.com/sites/<site>/path/to/folder
+// or:       ?folder=/sites/<site>/path/to/folder  (server-relative)
+function parseFolderParam(raw) {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return {
+      origin: url.origin,                    // https://tenant.sharepoint.com
+      serverRelativePath: decodeURIComponent(url.pathname)  // /sites/site/path
+    };
+  } catch {
+    // Already server-relative
+    return {
+      origin: location.origin,
+      serverRelativePath: decodeURIComponent(raw)
+    };
+  }
+}
+
+// ── SharePoint REST helpers ───────────────────────────────────────────────────
+async function spGet(origin, apiPath) {
+  const res = await fetch(`${origin}${apiPath}`, {
+    credentials: 'include',
+    headers: { Accept: 'application/json;odata=verbose' }
+  });
+  if (!res.ok) throw new Error(`SP GET ${apiPath} → ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+async function spGetBinary(origin, apiPath) {
+  const res = await fetch(`${origin}${apiPath}`, {
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error(`SP binary GET ${apiPath} → ${res.status} ${res.statusText}`);
+  return res.arrayBuffer();
+}
+
+// ── Get current user ──────────────────────────────────────────────────────────
+async function getCurrentUser(origin) {
+  try {
+    const data = await spGet(origin, '/_api/web/currentuser');
+    return data?.d?.Title || data?.d?.LoginName || 'Unknown user';
+  } catch {
+    return 'Unknown user';
+  }
+}
+
+// ── List PDF files in folder ──────────────────────────────────────────────────
+async function listPDFsInFolder(origin, folderPath) {
+  const encoded = encodeURIComponent(folderPath);
+  const data = await spGet(
+    origin,
+    `/_api/web/GetFolderByServerRelativePath(decodedurl='${folderPath}')/Files?$filter=substringof('.pdf',Name)&$select=Name,ServerRelativeUrl,Length`
+  );
+  return data?.d?.results || [];
+}
+
+// ── Fetch PDF binary ──────────────────────────────────────────────────────────
+async function fetchPDF(origin, serverRelativeUrl) {
+  const encoded = encodeURIComponent(serverRelativeUrl);
+  return spGetBinary(
+    origin,
+    `/_api/web/GetFileByServerRelativePath(decodedurl='${serverRelativeUrl}')/$value`
+  );
+}
+
+// ── Render a single page ──────────────────────────────────────────────────────
+async function renderPage(pageNum, targetScale) {
+  const page = await pdfDoc.getPage(pageNum);
+  const viewport = page.getViewport({ scale: targetScale });
+
+  let container = document.getElementById(`page-wrap-${pageNum}`);
+  let canvas    = document.getElementById(`page-canvas-${pageNum}`);
+
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'page-container';
+    container.id = `page-wrap-${pageNum}`;
+
+    canvas = document.createElement('canvas');
+    canvas.id = `page-canvas-${pageNum}`;
+    canvas.className = 'page-canvas';
+    container.appendChild(canvas);
+
+    const badge = document.createElement('span');
+    badge.className = 'page-num-badge';
+    badge.textContent = `${pageNum}`;
+    container.appendChild(badge);
+
+    viewerWrap.appendChild(container);
+    pageCanvases[pageNum] = canvas;
+  }
+
+  canvas.width  = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+
+  const ctx = canvas.getContext('2d');
+  await page.render({ canvasContext: ctx, viewport }).promise;
+}
+
+// ── Render thumbnail ──────────────────────────────────────────────────────────
+async function renderThumb(pageNum) {
+  const page = await pdfDoc.getPage(pageNum);
+  const viewport = page.getViewport({ scale: 0.2 });
+
+  const item = document.createElement('div');
+  item.className = 'thumb-item';
+  item.id = `thumb-${pageNum}`;
+  item.dataset.page = pageNum;
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'thumb-canvas';
+  canvas.width  = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+
+  const ctx = canvas.getContext('2d');
+  await page.render({ canvasContext: ctx, viewport }).promise;
+
+  const num = document.createElement('span');
+  num.className = 'thumb-num';
+  num.textContent = pageNum;
+
+  item.appendChild(canvas);
+  item.appendChild(num);
+  item.addEventListener('click', () => goToPage(pageNum));
+  thumbList.appendChild(item);
+}
+
+// ── Update active thumbnail ───────────────────────────────────────────────────
+function updateActiveThumb(pageNum) {
+  document.querySelectorAll('.thumb-item').forEach(el => el.classList.remove('active'));
+  const t = document.getElementById(`thumb-${pageNum}`);
+  if (t) { t.classList.add('active'); t.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+}
+
+// ── Go to page ────────────────────────────────────────────────────────────────
+function goToPage(num) {
+  if (!pdfDoc) return;
+  const clamped = Math.max(1, Math.min(num, pdfDoc.numPages));
+  currentPage = clamped;
+  pageInput.value = clamped;
+  updateActiveThumb(clamped);
+
+  const wrap = document.getElementById(`page-wrap-${clamped}`);
+  if (wrap) wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  btnPrev.disabled = clamped === 1;
+  btnNext.disabled = clamped === pdfDoc.numPages;
+}
+
+// ── Compute scale ─────────────────────────────────────────────────────────────
+async function computeScale(value) {
+  if (value === 'fit') {
+    const page = await pdfDoc.getPage(1);
+    const vp   = page.getViewport({ scale: 1 });
+    const avail = viewerWrap.clientWidth - 48;
+    return avail / vp.width;
+  }
+  return parseFloat(value);
+}
+
+// ── Re-render all pages at new scale ─────────────────────────────────────────
+async function reRenderAll(newScale) {
+  scale = newScale;
+  setStatus('Re-rendering pages…', 'loading');
+  for (let i = 1; i <= pdfDoc.numPages; i++) {
+    await renderPage(i, scale);
+  }
+  setStatus(`${pdfDoc.numPages} pages loaded`, 'ok');
+}
+
+// ── Intersection observer — update current page indicator ─────────────────────
+function setupScrollObserver() {
+  const observer = new IntersectionObserver(entries => {
+    let best = null;
+    let bestRatio = 0;
+    entries.forEach(e => {
+      if (e.intersectionRatio > bestRatio) {
+        bestRatio = e.intersectionRatio;
+        best = e.target;
+      }
+    });
+    if (best) {
+      const num = parseInt(best.id.replace('page-wrap-', ''));
+      if (num !== currentPage) {
+        currentPage = num;
+        pageInput.value = num;
+        updateActiveThumb(num);
+        btnPrev.disabled = num === 1;
+        btnNext.disabled = num === pdfDoc.numPages;
+      }
+    }
+  }, { root: viewerWrap, threshold: [0.1, 0.5] });
+
+  document.querySelectorAll('.page-container').forEach(el => observer.observe(el));
+}
+
+// ── Main init ──────────────────────────────────────────────────────────────────
+async function init() {
+  setOverlay('Loading document', 'Connecting to SharePoint…');
+  setStatus('Connecting…', 'loading');
+
+  // 1. Parse ?folder= param
+  const folderRaw = getParam('folder');
+  if (!folderRaw) {
+    showError(
+      'No folder specified',
+      '?folder= parameter is missing from the URL.',
+      'Open this viewer from Power Apps or a SharePoint folder link that includes the folder path.'
+    );
+    setStatus('Missing folder parameter', 'err');
+    return;
+  }
+
+  const folder = parseFolderParam(folderRaw);
+  if (!folder) {
+    showError('Invalid folder URL', folderRaw, 'Check the folder URL format.');
+    return;
+  }
+
+  statusFolder.textContent = folder.serverRelativePath.split('/').pop();
+
+  // 2. Get current user
+  overlayMsg.textContent = 'Authenticating…';
+  const user = await getCurrentUser(folder.origin);
+  statusUser.textContent = user;
+
+  // 3. List PDF files in folder
+  overlayMsg.textContent = 'Scanning folder…';
+  setStatus('Scanning folder…', 'loading');
+
+  let files;
+  try {
+    files = await listPDFsInFolder(folder.origin, folder.serverRelativePath);
+  } catch (err) {
+    showError(
+      'Cannot access folder',
+      err.message,
+      'Make sure you are signed in to Microsoft 365 and this viewer is hosted in the same SharePoint site.'
+    );
+    setStatus('Folder access failed', 'err');
+    return;
+  }
+
+  const pdfs = files.filter(f => f.Name.toLowerCase().endsWith('.pdf') && !f.Name.toLowerCase().endsWith('_reviewed.pdf'));
+  if (pdfs.length === 0) {
+    showError(
+      'No PDF found',
+      `Folder: ${folder.serverRelativePath}`,
+      'Make sure the document folder contains a PDF file.'
+    );
+    setStatus('No PDF in folder', 'err');
+    return;
+  }
+
+  const pdfFile = pdfs[0];
+  docTitleEl.textContent = pdfFile.Name;
+  document.title = `${pdfFile.Name} — NKE Reviewer`;
+
+  // 4. Fetch PDF binary
+  overlayMsg.textContent = `Downloading ${pdfFile.Name}…`;
+  progressWrap.style.display = 'block';
+  progressBar.style.width = '10%';
+  setStatus(`Downloading ${pdfFile.Name}…`, 'loading');
+
+  let pdfBytes;
+  try {
+    pdfBytes = await fetchPDF(folder.origin, pdfFile.ServerRelativeUrl);
+  } catch (err) {
+    showError('Failed to download PDF', err.message, 'Check your permissions on this file.');
+    setStatus('PDF download failed', 'err');
+    return;
+  }
+
+  progressBar.style.width = '40%';
+
+  // 5. Load with PDF.js
+  overlayMsg.textContent = 'Parsing document…';
+  setStatus('Parsing PDF…', 'loading');
+
+  try {
+    pdfDoc = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+  } catch (err) {
+    showError('Failed to parse PDF', err.message, 'The file may be corrupted or password-protected.');
+    setStatus('PDF parse failed', 'err');
+    return;
+  }
+
+  progressBar.style.width = '55%';
+  pageCount.textContent = `/ ${pdfDoc.numPages}`;
+  pageInput.max = pdfDoc.numPages;
+  btnPrev.disabled = true;
+  btnNext.disabled = pdfDoc.numPages === 1;
+
+  // 6. Compute initial scale
+  scale = await computeScale(zoomSelect.value);
+
+  // 7. Render all pages
+  overlayMsg.textContent = `Rendering ${pdfDoc.numPages} pages…`;
+  setStatus('Rendering pages…', 'loading');
+
+  for (let i = 1; i <= pdfDoc.numPages; i++) {
+    await renderPage(i, scale);
+    progressBar.style.width = `${55 + Math.round((i / pdfDoc.numPages) * 35)}%`;
+  }
+
+  progressBar.style.width = '95%';
+
+  // 8. Render thumbnails
+  for (let i = 1; i <= pdfDoc.numPages; i++) {
+    await renderThumb(i);
+  }
+
+  progressBar.style.width = '100%';
+  updateActiveThumb(1);
+  setupScrollObserver();
+
+  // Done
+  hideOverlay();
+  setStatus(`${pdfDoc.numPages} pages — ready`, 'ok');
+}
+
+// ── Event listeners ───────────────────────────────────────────────────────────
+btnPrev.addEventListener('click', () => goToPage(currentPage - 1));
+btnNext.addEventListener('click', () => goToPage(currentPage + 1));
+
+pageInput.addEventListener('change', () => goToPage(parseInt(pageInput.value) || 1));
+pageInput.addEventListener('keydown', e => { if (e.key === 'Enter') goToPage(parseInt(pageInput.value) || 1); });
+
+document.addEventListener('keydown', e => {
+  if (document.activeElement === pageInput) return;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToPage(currentPage + 1);
+  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   goToPage(currentPage - 1);
+});
+
+btnSidebar.addEventListener('click', () => {
+  sidebarOpen = !sidebarOpen;
+  sidebar.classList.toggle('collapsed', !sidebarOpen);
+});
+
+zoomSelect.addEventListener('change', async () => {
+  if (!pdfDoc) return;
+  const newScale = await computeScale(zoomSelect.value);
+  await reRenderAll(newScale);
+  goToPage(currentPage);
+});
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
